@@ -1,0 +1,12 @@
+# Copy to .feishu.local in your project root (or anywhere — point at it via
+# --config or FEISHU_LOCAL_PATH). Add .feishu.local to .gitignore.
+
+# From open.feishu.cn -> 自建应用 -> 凭证与基础信息
+FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
+FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Wiki destination. The space ID is the long number in your wiki URL after
+# /space/, and the parent node token is the short token in the page URL of
+# whichever wiki page should be the parent of the synced sub-pages.
+FEISHU_WIKI_SPACE_ID=7xxxxxxxxxxxxxxxxxx
+FEISHU_WIKI_TRD_PARENT_NODE=Xxxxxxxxxxxxxxxxxxxxxxxxxxx
