@@ -22,16 +22,50 @@ The pipeline is idempotent per-file: re-running `sync_page.py` on the same `.md`
 creates a new sub-page (the previous one stays untouched — Feishu's API can't
 delete wiki nodes). The image and mermaid stages are safely re-runnable.
 
-## What it does — 3 stages
+## What it does — 3 stages (+ optional 0)
 
 | # | Stage | Script | When to run |
 |---|---|---|---|
+| 0 | Create disposable "intermediate" wiki node as the parent for synced pages | `create_intermediate_node.py` | Once per re-sync cycle (see § Disposable intermediate node pattern below) |
 | 1 | Markdown → wiki sub-pages (one node per `.md`) | `sync_all.py` (calls `sync_page.py` per file) | Once initially, or per-file via `--only` to refresh |
 | 2 | `![](rel/path.png)` placeholders → uploaded image blocks | `upload_images.py` | After stage 1, whenever images change |
 | 3 | ` ```mermaid ` code blocks → native 文本绘图 widgets | `replace_mermaid.py` | After stage 1, whenever mermaid sources change |
 
 Stage 1 must run first — it creates `node_mapping.json` (stem → wiki node + docx
 token) that stages 2 and 3 read.
+
+## Disposable intermediate node pattern
+
+Because Feishu's Open API can't update an existing wiki node in place and can't
+delete one either, every re-sync produces a brand-new wiki node per `.md` —
+the old version stays around as clutter. The clean pattern is:
+
+```
+<wiki space>
+└── 设备管理平台TRD            ← STABLE root, never deleted, app has edit rights
+    └── 当前版本-2026-05-08    ← DISPOSABLE intermediate, holds all synced pages
+        ├── 00-architecture
+        ├── 01-mqtt-protocol
+        └── ... (one wiki node per .md)
+```
+
+To refresh after edits:
+
+1. **In the Feishu UI**, manually delete the disposable intermediate node ("删除此页面和它包含的所有子页面") — Open API does not expose deletion, this step *cannot* be automated.
+2. Verify the stable root is still alive (don't accidentally delete it — its parent token must remain valid for the next step).
+3. `python3 create_intermediate_node.py --title "当前版本-<新日期>"` — creates a new empty docx node under the root. Copy the printed `node_token` + `obj_token`.
+4. Update `.feishu.local`: set `FEISHU_WIKI_TRD_PARENT_NODE` to the new intermediate token (and `FEISHU_WIKI_TRD_DOCX_ID` if your project tracks it).
+5. Backup or delete the stale `node_mapping.json` (its tokens point at the just-deleted nodes).
+6. Re-run stages 1 → 2 → 3.
+
+The script `create_intermediate_node.py` reads parent in priority order:
+`--parent <token>` flag → `FEISHU_WIKI_TRD_ROOT_NODE` → `FEISHU_WIKI_TRD_PARENT_NODE`.
+For this pattern, **set `FEISHU_WIKI_TRD_ROOT_NODE` once** to the stable parent
+that never gets deleted; let `FEISHU_WIKI_TRD_PARENT_NODE` rotate per re-sync.
+
+If the user manually deleted the wrong thing (the root) you'll get
+`131005 not found` from the create call — fix is recreate root via the same
+script with a different `--parent` (e.g. the wiki space home node).
 
 ## Prerequisites the user must do once
 
@@ -54,6 +88,8 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 FEISHU_WIKI_SPACE_ID=7xxxxxxxxxxxx
 FEISHU_WIKI_TRD_PARENT_NODE=Xxxxxxxxxxxx
+# Optional but recommended for the disposable-intermediate-node pattern:
+FEISHU_WIKI_TRD_ROOT_NODE=Yyyyyyyyyyyy   # stable parent of the intermediate
 ```
 
 The scripts find this file via, in order:
@@ -74,6 +110,11 @@ SKILL=~/.claude/skills/feishu-md-sync/scripts
 
 # Smoke-test auth first
 python3 "$SKILL/feishu_client.py"
+
+# Stage 0 (only when re-syncing after deleting old intermediate in UI):
+# create a new disposable intermediate node, then put its node_token into
+# FEISHU_WIKI_TRD_PARENT_NODE in .feishu.local.
+python3 "$SKILL/create_intermediate_node.py" --title "当前版本-2026-05-08"
 
 # Stage 1: sync all .md files to wiki (one sub-page each)
 python3 "$SKILL/sync_all.py" --docs-dir docs/claude
@@ -152,7 +193,9 @@ adjacent blocks).
 | `1061004 forbidden` on `medias/upload_all` parent_type=ccm_import_open | Wrong parent_type for our flow | Use `parent_type=explorer` for md files; `parent_type=docx_image` for images inside a docx |
 | Move task returns status=1 but script reports failure | Older versions treated processing as terminal | Treat `status=1` as keep-polling, only `status>=2` is failure |
 | Mermaid `Note over X: ...(text)` parse error | Half-width `()` in `Note` text confuses mermaid parser | Replace `()` with full-width `（）` in source md |
-| Wiki node deletion impossible via API | Open API doesn't expose this | User must delete in UI — there's no workaround |
+| Wiki node deletion impossible via API | Open API doesn't expose this | User must delete in UI ("删除此页面和它包含的所有子页面"). Use the disposable-intermediate-node pattern (see § above) so the only thing that needs deleting is one container, not every page. |
+| `131005 not found` on `POST /wiki/v2/spaces/{id}/nodes` (creating intermediate) | Parent token in env var was just deleted in UI (or never existed) | Read parent from `FEISHU_WIKI_TRD_ROOT_NODE` (stable), not `FEISHU_WIKI_TRD_PARENT_NODE` (disposable). `create_intermediate_node.py` does this automatically. |
+| Stale `node_mapping.json` after a UI delete | Mapping still points at deleted nodes | Backup/delete the file before re-running stage 1; sync_page.py will write fresh entries. |
 | `replace_add_ons` returns `1770001 invalid param` | API rejects in-place updates of add_ons widgets | Insert new widget, delete old (re-running `replace_mermaid.py` does this) |
 
 ## Reference files
@@ -164,6 +207,7 @@ adjacent blocks).
 ## Scripts
 
 - `scripts/feishu_client.py` — auth + thin HTTP wrapper. Run directly to smoke-test creds.
+- `scripts/create_intermediate_node.py` — Stage 0: create a disposable container wiki node under a stable parent. Use when re-syncing after manually deleting the old intermediate in UI.
 - `scripts/sync_page.py` — one md → one wiki sub-page.
 - `scripts/sync_all.py` — orchestrator over `sync_page.py`.
 - `scripts/upload_images.py` — replaces image placeholders with uploaded blocks.

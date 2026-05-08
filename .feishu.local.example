@@ -9,4 +9,14 @@ FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 # /space/, and the parent node token is the short token in the page URL of
 # whichever wiki page should be the parent of the synced sub-pages.
 FEISHU_WIKI_SPACE_ID=7xxxxxxxxxxxxxxxxxx
+
+# The wiki node that the synced .md pages are mounted under. In the
+# disposable-intermediate-node pattern this is the date-named "current
+# version" container that you periodically delete + recreate.
 FEISHU_WIKI_TRD_PARENT_NODE=Xxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Optional but recommended: a STABLE parent of the intermediate above.
+# `create_intermediate_node.py` reads this when creating a fresh container,
+# so re-syncs don't fail just because TRD_PARENT_NODE points at a token you
+# already deleted in UI. See SKILL.md § Disposable intermediate node pattern.
+# FEISHU_WIKI_TRD_ROOT_NODE=Yyyyyyyyyyyyyyyyyyyyyyyyyyy
